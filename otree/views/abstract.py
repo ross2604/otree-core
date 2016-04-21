@@ -259,8 +259,15 @@ class FormPageOrInGameWaitPageMixin(OTreeMixin):
         self.GroupClass = getattr(models_module, 'Group')
         self.PlayerClass = getattr(models_module, 'Player')
 
+        import threading
         print('**********ID map cache:')
-        print(self._get_save_objects_model_instances())
+        print('Path: {}'.format(self.request.path))
+        print('Thread: {}'.format(threading.current_thread().ident))
+        import idmap.tls
+        cache = getattr(idmap.tls._tls, 'idmap_cache', {})
+        for model_class in self._get_save_objects_models():
+            pks = list(sorted(cache.get(model_class, {}).keys()))
+            print('{}: {}'.format(model_class, pks))
 
         self.player = self.PlayerClass.objects.get(pk=player_pk)
 
