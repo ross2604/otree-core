@@ -262,7 +262,7 @@ class FormPageOrInGameWaitPageMixin(OTreeMixin):
         import threading
         print('**********ID map cache:')
         print('Path: {}'.format(self.request.path))
-        print('Thread: {}'.format(threading.current_thread().ident))
+        print('Thread: {}'.format(threading.current_thread()))
         import idmap.tls
         cache = getattr(idmap.tls._tls, 'idmap_cache', {})
         for model_class in self._get_save_objects_models():
