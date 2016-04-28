@@ -868,6 +868,8 @@ class FormPageMixin(object):
                 )[0]
                 # TODO: should we warn if the attribute doesn't exist?
                 value = getattr(ModelField, 'auto_submit_default', None)
+                if value is None:
+                    print('***auto_submit_default for {} is None'.format(ModelField))
             setattr(self.object, field_name, value)
 
     def has_timeout(self):
