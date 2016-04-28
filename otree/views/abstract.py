@@ -238,6 +238,20 @@ class FormPageOrInGameWaitPageMixin(OTreeMixin):
 
         return [basic_info_table] + new_tables
 
+    def get_id_map_cache(self):
+        import threading
+        lines = []
+        lines.append('**********ID map cache:')
+        lines.append('Path: {}'.format(self.request.path))
+        lines.append('Thread: {}'.format(threading.current_thread().ident))
+        import idmap.tls
+        cache = getattr(idmap.tls._tls, 'idmap_cache', {})
+        for model_class in self._get_save_objects_models():
+            pks = list(sorted(cache.get(model_class, {}).keys()))
+            lines.append('{}: {}'.format(model_class, pks))
+        return '\n'.join(lines)
+
+
     def load_objects(self):
         """
         Even though we only use PlayerClass in load_objects,
@@ -580,9 +594,18 @@ class InGameWaitPageMixin(object):
                     # there is no single player in this context
                     # (method is executed once for the whole group)
 
+
+
                     player = self.player
                     del self.player
-                    self.after_all_players_arrive()
+
+                    cache_report = self.get_id_map_cache()
+                    try:
+                        self.after_all_players_arrive()
+                    except Exception as e:
+                        print(cache_report)
+                        raise e
+
                     self.player = player
 
                     completion.after_all_players_arrive_run = True
