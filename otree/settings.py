@@ -80,7 +80,7 @@ def get_default_settings(initial_settings=None):
         'Powered By <a href="http://otree.org" target="_blank">oTree</a>'
     )
 
-    REDIS_URL = os.environ.get('REDIS_URL', 'redis://localhost:6379')
+    REDIS_URL = os.environ.get('REDIS_URL', 'redis://localhost:6378')
 
     return {
         # set to True so that if there is an error in an {% include %}'d
@@ -157,8 +157,8 @@ def get_default_settings(initial_settings=None):
          },
 
         # celery settings
-        'BROKER_URL': REDIS_URL + '/0',
-        'CELERY_RESULT_BACKEND': REDIS_URL + '/0',
+        'BROKER_URL': REDIS_URL,
+        'CELERY_RESULT_BACKEND': REDIS_URL,
         'CELERY_APP': 'otree.celery.app:app',
 
         # since workers on Amazon MTurk can return the hit
