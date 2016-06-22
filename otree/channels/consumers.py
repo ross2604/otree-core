@@ -178,7 +178,7 @@ def connect_room_admin(message, room):
 
     # prune very old visits -- don't want a resource leak
     # because sometimes not getting deleted on WebSocket disconnect
-    very_stale_threshold = now - timedelta(minutes=10)
+    very_stale_threshold = now - timedelta(minutes=1)
     ParticipantRoomVisit.objects.filter(
         room_name=room_object.name,
         last_updated__lt=very_stale_threshold,
