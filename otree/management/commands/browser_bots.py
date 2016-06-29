@@ -8,15 +8,17 @@ import logging
 import six
 import requests
 from django.core.management.base import BaseCommand
-from otree.session import create_session
 from six.moves import urllib
 from django.core.urlresolvers import reverse
 from django.conf import settings
 import subprocess
 from otree.room import ROOM_DICT
 from otree.session import SESSION_CONFIGS_DICT, get_lcm
-from huey.contrib.djhuey import HUEY
+import websocket
 import psutil
+
+# how do i import this properly?
+urljoin = urllib.parse.urljoin
 
 FIREFOX_CMDS = {
     'windows': "C:/Program Files (x86)/Mozilla Firefox/firefox.exe",
@@ -46,6 +48,17 @@ NUM_PARTICIPANTS_FLAG = '--num_participants'
 BASE_URL_FLAG = '--base_url'
 
 
+RUNSERVER_WARNING = '''
+You are using "otree runserver". In order to use browser bots,
+you should run a multiprocess server (e.g. "otree webandworkers").
+'''
+
+SQLITE_WARNING = '''
+WARNING: Your server is running are using SQLite.
+Browser bots may not run properly.
+We recommend using to Postgres or MySQL etc.
+'''
+
 class Command(BaseCommand):
     help = "oTree: Run browser bots."
 
@@ -57,7 +70,7 @@ class Command(BaseCommand):
         parser.add_argument(
             BASE_URL_FLAG, action='store', type=str, dest='base_url',
             default='http://127.0.0.1:8000',
-            help='Base URL')
+            help="Server's root URL")
         ahelp = (
             'Numbers of participants. Examples: "12" or "4,12,18".'
             'Defaults to minimum for the session config.'
@@ -84,10 +97,24 @@ class Command(BaseCommand):
             self.session_sizes = [int(n) for n in num_participants.split(',')]
         else:
             self.session_sizes = None
-        self.start_url = urllib.parse.urljoin(
+        self.start_url = urljoin(
             base_url,
             reverse('assign_visitor_to_room', args=[room_name])
         )
+        self.create_session_url = urljoin(
+            base_url,
+            reverse('create_browser_bots_session')
+        )
+        self.delete_session_url = urljoin(base_url, reverse('delete_sessions'))
+
+        # seems that urljoin doesn't work with ws:// urls
+        # so do the ws replace after URLjoin
+        websocket_url = urljoin(
+            base_url,
+            '/browser_bots_client/{}/'
+        )
+        self.websocket_url = websocket_url.replace(
+            'http://', 'ws://').replace('https://', 'wss://')
 
         session_config_names = options["session_config_name"]
         if not session_config_names:
@@ -100,6 +127,8 @@ class Command(BaseCommand):
 
         if 'chrome' in self.browser_cmd.lower():
             chrome_seen = False
+            # FIXME: this is slow on Mac (maybe Linux too)
+            # maybe use ps|grep instead
             for proc in psutil.process_iter():
                 if 'chrome' in proc.name().lower():
                     chrome_seen = True
@@ -128,17 +157,33 @@ class Command(BaseCommand):
 
         logging.getLogger("requests").setLevel(logging.WARNING)
         try:
-            resp = requests.get(base_url)
-            assert resp.ok
+            # FIXME: authentication
+            # .get just returns server readiness info
+            resp = requests.get(self.create_session_url)
         except:
             raise Exception(
-                'Could not open page at {}.'
+                'Could not connect to server at {}.'
                 'Before running this command, '
                 'you need to run the server (see {} flag).'.format(
                     base_url,
                     BASE_URL_FLAG
                 )
             )
+        if not resp.ok:
+            raise Exception(
+                'Could not open page at {}.'
+                '(HTTP status code: {})'.format(
+                    base_url,
+                    resp.status_code,
+                )
+            )
+
+        server_check = resp.json()
+
+        if server_check['runserver']:
+            print(RUNSERVER_WARNING)
+        if server_check['sqlite']:
+            print(SQLITE_WARNING)
 
         self.max_name_length = max(
             len(config_name) for config_name in session_config_names
@@ -150,13 +195,7 @@ class Command(BaseCommand):
             session_config = SESSION_CONFIGS_DICT[session_config_name]
 
             if self.session_sizes is None:
-                size = get_lcm(session_config)
-                # shouldn't just play 1 person because that doesn't test
-                # the dynamics of multiplayer games with
-                # players_per_group = None
-                if size == 1:
-                    size = 2
-                session_sizes = [size]
+                session_sizes = [session_config['num_demo_participants']]
             else:
                 session_sizes = self.session_sizes
 
@@ -188,24 +227,27 @@ class Command(BaseCommand):
         row_fmt = "{:<%d} {:>2} participants..." % (self.max_name_length + 1)
         print(row_fmt.format(session_config_name, num_participants), end='')
 
-        session = create_session(
-            session_config_name=session_config_name,
-            num_participants=num_participants,
-            room_name=self.room_name,
-            use_browser_bots=True
+        resp = requests.post(
+            self.create_session_url,
+            data={
+                'session_config_name': session_config_name,
+                'num_participants': num_participants,
+            }
+        )
+
+        assert resp.ok, 'Failed to create session'
+        session_code = resp.content.decode('utf-8')
+
+        websocket_url = self.websocket_url.format(session_code)
+        ws = websocket.create_connection(
+            websocket_url
         )
 
         try:
             bot_start_time = time.time()
 
-            participants_finished = 0
-            while True:
-                if HUEY.storage.conn.lpop(session.code):
-                    participants_finished += 1
-                    if participants_finished == num_participants:
-                        break
-                else:
-                    time.sleep(0.1)
+            for i in range(num_participants):
+                ws.recv()
 
             time_spent = round(time.time() - bot_start_time, 1)
             print('...finished in {} seconds'.format(time_spent))
@@ -214,8 +256,15 @@ class Command(BaseCommand):
             # TODO:
             # - if Chrome/FF is already running when the browser is launched,
             # this does nothing.
+            # also, they report a crash (in Firefox it blocks the app from
+            # starting again), in Chrome it's just a side notice
             browser_process.terminate()
 
         finally:
-            session.delete()
+            resp = requests.post(
+                self.delete_session_url,
+                # FIXME: not sure this is right syntax
+                data={'item-action': [session_code]}
+            )
+            assert resp.ok, 'Failed to delete session.'
         return time_spent

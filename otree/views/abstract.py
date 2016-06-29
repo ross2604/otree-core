@@ -607,6 +607,11 @@ class InGameWaitPageMixin(object):
             player = self.player
             del self.player
 
+            # same idea as deleting self.player, if we're waiting for all
+            # groups, not just one.
+            if self.wait_for_all_groups:
+                del self.group
+
             # make sure we get the most up-to-date player objects
             # e.g. if they were queried in is_displayed(),
             # then they could be out of date
@@ -789,8 +794,9 @@ class BrowserBot(object):
 
     def check_if_finished(self):
         if self.send_finished_message:
-            HUEY.storage.conn.rpush(
-                self.session.code, True)
+            channels.Group(
+                'browser-bots-client-{}'.format(self.session.code)
+            ).send({'text': json.dumps({'status': 'ready'})})
 
 
 class FormPageMixin(object):
