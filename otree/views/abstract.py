@@ -184,6 +184,7 @@ class FormPageOrInGameWaitPageMixin(OTreeMixin):
     def get_context_data(self, **kwargs):
         context = super(FormPageOrInGameWaitPageMixin,
                         self).get_context_data(**kwargs)
+
         context.update({
             'form': kwargs.get('form'),
             'player': self.player,
@@ -192,7 +193,6 @@ class FormPageOrInGameWaitPageMixin(OTreeMixin):
             'session': self.session,
             'participant': self.participant,
             'Constants': self._models_module.Constants,
-            'use_browser_bots': self.session._use_browser_bots,
         })
         vars_for_template = self.resolve_vars_for_template()
         context.update(vars_for_template)
@@ -787,16 +787,16 @@ class BrowserBot(object):
                 )
             post_data.update(submit_model.param_dict)
             self.input_is_valid = submit_model.input_is_valid
-            self.send_finished_message = submit_model.is_last
+            if submit_model.is_last:
+                self.participant._browser_bot_finished = True
+                # if next page will be OutOfRangeNotification,
+                # it's safe to send the message here
+                if self.view.index_in_pages >= self.participant._max_page_index:
+                    # call this just to send the message
+                    self.view.browser_bot_should_auto_submit()
             submit_model.delete()
 
         return post_data
-
-    def check_if_finished(self):
-        if self.send_finished_message:
-            channels.Group(
-                'browser-bots-client-{}'.format(self.session.code)
-            ).send({'text': json.dumps({'status': 'ready'})})
 
 
 class FormPageMixin(object):
@@ -885,8 +885,6 @@ class FormPageMixin(object):
             if form.is_valid():
                 self.form = form
                 self.object = form.save()
-                if use_browser_bots:
-                    bot.check_if_finished()
             else:
                 if use_browser_bots and not bot.input_is_valid:
                     errors = [
@@ -936,6 +934,22 @@ class FormPageMixin(object):
         auto_submit_dict = self._get_auto_submit_values()
         for field_name in auto_submit_dict:
             setattr(self.object, field_name, auto_submit_dict[field_name])
+
+    def browser_bot_should_auto_submit(self):
+        '''
+        side effect: sends completion message, if browser bot is done.
+        we send it here because this is triggered during template rendering
+        on GET of the last page, which is almost the last thing that happens.
+        '''
+        if self.session._use_browser_bots:
+            if self.participant._browser_bot_finished:
+                channels.Group(
+                    'browser-bots-client-{}'.format(self.session.code)
+                ).send({'text': self.participant.code})
+                return False
+            else:
+                return True
+        return False
 
     def has_timeout(self):
         return self.timeout_seconds is not None and self.timeout_seconds > 0

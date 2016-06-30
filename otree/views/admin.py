@@ -1015,11 +1015,6 @@ class CreateBrowserBotsSession(vanilla.View):
     def url_name(cls):
         return 'create_browser_bots_session'
 
-    # TODO: i disabled CSRF so browser bots could work.
-    # in the future, consider re-enabling
-    # for some reason it doesn't work when i put the decorator only
-    # on the POST method
-    @method_decorator(csrf_exempt)
     def dispatch(self, *args, **kwargs):
         return super(CreateBrowserBotsSession, self).dispatch(*args, **kwargs)
 

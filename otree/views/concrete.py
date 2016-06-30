@@ -479,11 +479,6 @@ class DeleteSessions(vanilla.View):
     def url_name(cls):
         return 'delete_sessions'
 
-    # TODO: i disabled CSRF so browser bots could work.
-    # in the future, consider re-enabling
-    # for some reason it doesn't work when i put the decorator only
-    # on the POST method
-    @method_decorator(csrf_exempt)
     def dispatch(self, *args, **kwargs):
         return super(DeleteSessions, self).dispatch(*args, **kwargs)
 
