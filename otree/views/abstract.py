@@ -449,26 +449,42 @@ class FormPageOrInGameWaitPageMixin(OTreeMixin):
 
     @contextlib.contextmanager
     def check_if_browser_bot_should_auto_submit(self):
-        '''
-        if not using browser bots, this context manager does nothing
-        No return value.
-        If should auto-submit, this sets self.browser_bot_should_auto_submit
-        which can then be seen by the template.
 
-        side effect: sends completion message, if browser bot is done.
-        we send it here because this is triggered during template rendering
-        on GET of the last page, which is almost the last thing that happens
-        in the request.
-        '''
-        self.browser_bot_should_auto_submit = (
-            self.session._use_browser_bots and
-            not self.participant._browser_bot_finished
-        )
+        # if not using browser bots, this context manager does nothing
+        if not self.session._use_browser_bots:
+            yield
+            return
+
+        browser_bot_finished = self.participant._browser_bot_finished
+
+        # this attribute is set so the template can read it and decide
+        # whether to insta-submit with JS
+        self.browser_bot_should_auto_submit = not browser_bot_finished
+
         yield
-        if self.participant._browser_bot_finished:
-            channels.Group(
-                'browser-bots-client-{}'.format(self.session.code)
-            ).send({'text': self.participant.code})
+
+        if browser_bot_finished:
+            on_last_page = (
+                self._index_in_pages >= self.participant._max_page_index
+            )
+
+            if self.request.method == 'GET':
+                # if it's GET, then we will not auto-submit,
+                # so there will be no next request.
+                send_message = True
+            elif self.request.method == 'POST' and on_last_page:
+                # send message if it's last page, because
+                # the next page will be the OutOfRangeNotification,
+                # which will not auto-submit (so this is the last request)
+                send_message = True
+            else:
+                # there will be a next GET request, which we should allow
+                # to happen
+                send_message = False
+            if send_message:
+                channels.Group(
+                    'browser-bots-client-{}'.format(self.session.code)
+                ).send({'text': self.participant.code})
 
 
 class GenericWaitPageMixin(object):

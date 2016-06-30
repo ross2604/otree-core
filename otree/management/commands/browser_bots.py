@@ -14,7 +14,8 @@ from django.conf import settings
 import subprocess
 from otree.room import ROOM_DICT
 from otree.session import SESSION_CONFIGS_DICT, get_lcm
-import websocket
+from ws4py.client.threadedclient import WebSocketClient
+
 import psutil
 
 # how do i import this properly?
@@ -66,6 +67,26 @@ browser bots on a remote server, make sure the username
 and password on your local oTree installation match that
 on the server.
 """
+
+class AllParticipantsFinished(Exception):
+    pass
+
+class OtreeWebSocketClient(WebSocketClient):
+
+    def __init__(self, *args, **kwargs):
+        self.session_size = kwargs.pop('session_size')
+        self.seen_participant_codes = set()
+        self.participants_finished = 0
+        super(OtreeWebSocketClient, self).__init__(*args, **kwargs)
+
+    def received_message(self, message):
+        code = message
+        if code not in self.seen_participant_codes:
+            self.seen_participant_codes.add(code)
+            self.participants_finished += 1
+            if self.participants_finished == self.session_size:
+                raise AllParticipantsFinished()
+
 
 class Command(BaseCommand):
     help = "oTree: Run browser bots."
@@ -235,7 +256,7 @@ class Command(BaseCommand):
                     session_sizes = self.session_sizes
 
                 for num_participants in session_sizes:
-                    self.run_session_config(
+                    self.run_session(
                         session_config_name,
                         num_participants
                     )
@@ -258,7 +279,7 @@ class Command(BaseCommand):
             round(self.total_time_spent, 1)
         ))
 
-    def run_session_config(self, session_config_name, num_participants):
+    def run_session(self, session_config_name, num_participants):
         args = [self.browser_cmd]
         for i in range(num_participants):
             args.append(self.wait_room_url)
@@ -290,24 +311,19 @@ class Command(BaseCommand):
         assert resp.ok, 'Failed to create session'
         session_code = resp.content.decode('utf-8')
         self.session_codes.append(session_code)
-
-        websocket_url = self.websocket_url.format(session_code)
-        ws = websocket.create_connection(
-            websocket_url
-        )
-
         bot_start_time = time.time()
 
-        seen_participant_codes = set()
-        participants_finished = 0
-
-        while participants_finished < num_participants:
-            code = ws.recv()
-            # guard against the same participant sending the message
-            # twice somehow
-            if code not in seen_participant_codes:
-                seen_participant_codes.add(code)
-                participants_finished += 1
+        websocket_url = self.websocket_url.format(session_code)
+        ws_client = OtreeWebSocketClient(
+            websocket_url,
+            session_size=num_participants,
+        )
+        ws_client.connect()
+        try:
+            ws_client.run_forever()
+        except AllParticipantsFinished:
+            ws_client.close()
+            # then continue
 
         time_spent = round(time.time() - bot_start_time, 1)
         print('...finished in {} seconds'.format(time_spent))
