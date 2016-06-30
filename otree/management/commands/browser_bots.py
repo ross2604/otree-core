@@ -103,6 +103,11 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
 
         server_url = options['server_url']
+
+        # if it doesn't start with http:// or https://,
+        # assume http://
+        if not server_url.startswith('http'):
+            server_url = 'http://' + server_url
         room_name = options['room']
 
         num_participants = options['num_participants']
