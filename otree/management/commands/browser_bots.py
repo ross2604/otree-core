@@ -59,6 +59,14 @@ Browser bots may not run properly.
 We recommend using to Postgres or MySQL etc.
 '''
 
+AUTH_FAILURE_MESSAGE = """
+Could not login to the server using your ADMIN_USERNAME
+and ADMIN_PASSWORD from settings.py. If you are testing
+browser bots on a remote server, make sure the username
+and password on your local oTree installation match that
+on the server.
+"""
+
 class Command(BaseCommand):
     help = "oTree: Run browser bots."
 
@@ -187,15 +195,15 @@ class Command(BaseCommand):
             )
 
         # login
-        # TODO: detect if this succeeded
-        self.post(
+        resp = self.post(
             login_url,
-            {
+            data={
                 'username': settings.ADMIN_USERNAME,
                 'password': settings.ADMIN_PASSWORD,
-            }
+            },
         )
-
+        if '/accounts/login' in resp.url:
+            raise Exception(AUTH_FAILURE_MESSAGE)
 
         # .get just returns server readiness info
         resp = self.client.get(self.create_session_url)

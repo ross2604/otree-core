@@ -319,13 +319,15 @@ class FormPageOrInGameWaitPageMixin(OTreeMixin):
             self.participant.last_request_succeeded = True
             self.participant._last_request_timestamp = time.time()
 
-            # need to render the response before saving objects,
-            # because the template might call a method that modifies
-            # player/group/etc.
-            if hasattr(response, 'render'):
-                response.render()
-            self.save_objects()
-            return response
+            # if not using browser bots, this context manager does nothing
+            with self.check_if_browser_bot_should_auto_submit():
+                # need to render the response before saving objects,
+                # because the template might call a method that modifies
+                # player/group/etc.
+                if hasattr(response, 'render'):
+                    response.render()
+                self.save_objects()
+                return response
 
     # TODO: maybe this isn't necessary, because I can figure out what page
     # they should be on, from looking up index_in_pages
@@ -444,6 +446,29 @@ class FormPageOrInGameWaitPageMixin(OTreeMixin):
             session=self.session,
             auto_submitted=timeout_happened)
         self.participant.save()
+
+    @contextlib.contextmanager
+    def check_if_browser_bot_should_auto_submit(self):
+        '''
+        if not using browser bots, this context manager does nothing
+        No return value.
+        If should auto-submit, this sets self.browser_bot_should_auto_submit
+        which can then be seen by the template.
+
+        side effect: sends completion message, if browser bot is done.
+        we send it here because this is triggered during template rendering
+        on GET of the last page, which is almost the last thing that happens
+        in the request.
+        '''
+        self.browser_bot_should_auto_submit = (
+            self.session._use_browser_bots and
+            not self.participant._browser_bot_finished
+        )
+        yield
+        if self.participant._browser_bot_finished:
+            channels.Group(
+                'browser-bots-client-{}'.format(self.session.code)
+            ).send({'text': self.participant.code})
 
 
 class GenericWaitPageMixin(object):
@@ -789,11 +814,6 @@ class BrowserBot(object):
             self.input_is_valid = submit_model.input_is_valid
             if submit_model.is_last:
                 self.participant._browser_bot_finished = True
-                # if next page will be OutOfRangeNotification,
-                # it's safe to send the message here
-                if self.view.index_in_pages >= self.participant._max_page_index:
-                    # call this just to send the message
-                    self.view.browser_bot_should_auto_submit()
             submit_model.delete()
 
         return post_data
@@ -934,22 +954,6 @@ class FormPageMixin(object):
         auto_submit_dict = self._get_auto_submit_values()
         for field_name in auto_submit_dict:
             setattr(self.object, field_name, auto_submit_dict[field_name])
-
-    def browser_bot_should_auto_submit(self):
-        '''
-        side effect: sends completion message, if browser bot is done.
-        we send it here because this is triggered during template rendering
-        on GET of the last page, which is almost the last thing that happens.
-        '''
-        if self.session._use_browser_bots:
-            if self.participant._browser_bot_finished:
-                channels.Group(
-                    'browser-bots-client-{}'.format(self.session.code)
-                ).send({'text': self.participant.code})
-                return False
-            else:
-                return True
-        return False
 
     def has_timeout(self):
         return self.timeout_seconds is not None and self.timeout_seconds > 0
