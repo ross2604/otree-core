@@ -77,6 +77,18 @@ def random_chars_8():
 def random_chars_10():
     return random_chars(10)
 
+def partition_session_code_charset(n_chunks):
+    # divides the character set into n chunks,
+    # e.g. if n_chunks is 4, will return
+    # ['aeimquy26', 'bfjnrvz37', 'cgkosw048', 'dhlptx159']
+    chunks = [''] * n_chunks
+
+    for i in range(len(SESSION_CODE_CHARSET)):
+        chunks[i % n_chunks] += SESSION_CODE_CHARSET[i]
+
+    return chunks
+
+
 
 def app_name_format(app_name):
     app_label = app_name.split('.')[-1]

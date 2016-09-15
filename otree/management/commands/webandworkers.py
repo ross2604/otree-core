@@ -11,7 +11,7 @@ from channels.log import setup_logger
 
 from django.core.management.base import BaseCommand
 from django.core.management.base import CommandError
-import django.core.management.commands.runserver
+from otree.common_internal import partition_session_code_charset
 
 naiveip_re = re.compile(r"""^
 (?P<addr>
@@ -85,17 +85,22 @@ class Command(BaseCommand):
         print('Starting daphne server on {}:{}'.format(self.addr, self.port))
 
         manager.add_process('daphne', daphne_cmd, env=self.get_env(options))
-        for i in range(3):
+        NUM_WORKERS = 3
+        for i in range(NUM_WORKERS):
             manager.add_process(
                 'worker{}'.format(i),
                 'otree runworker',
                 env=self.get_env(options))
         if options['botworker']:
-            manager.add_process(
-                'botworker',
-                'otree botworker',
-                quiet=False,
-                env=self.get_env(options)
-            )
+            # FIXME: make the number of botworkers customizable
+            # 3 is too many for Heroku
+            char_ranges = partition_session_code_charset(NUM_WORKERS)
+            for i, char_range in enumerate(char_ranges):
+                manager.add_process(
+                    'botworker{}'.format(i),
+                    'otree botworker --char-range {}'.format(char_range),
+                    quiet=False,
+                    env=self.get_env(options)
+                )
 
         return manager

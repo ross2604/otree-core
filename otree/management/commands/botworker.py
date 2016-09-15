@@ -1,7 +1,8 @@
 import logging
 from django.core.management.base import BaseCommand
 import otree.bots.browser
-from otree.common_internal import get_redis_conn
+from otree.common_internal import (
+    get_redis_conn, SESSION_CODE_CHARSET)
 import six
 
 # =============================================================================
@@ -26,6 +27,8 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         char_range = options['char_range']
+        if not char_range:
+            char_range = SESSION_CODE_CHARSET
         redis_conn = get_redis_conn()
         otree.bots.browser.redis_flush_bots(redis_conn, char_range)
         worker = otree.bots.browser.Worker(redis_conn, char_range)

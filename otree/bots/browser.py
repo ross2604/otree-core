@@ -14,11 +14,11 @@ import channels
 import traceback
 
 import otree.common_internal
-from otree.models import Session
-from otree.common_internal import get_redis_conn
+from otree.models.participant import Participant
+from otree.common_internal import get_redis_conn, SESSION_CODE_CHARSET
 
 from .bot import ParticipantBot
-
+import time
 
 REDIS_KEY_PREFIX = 'otree-bots'
 
@@ -31,37 +31,37 @@ prepare_submit_lock = threading.Lock()
 
 logger = logging.getLogger('otree.test.browser_bots')
 
+def make_redis_key(participant_code):
+    return '{}-{}'.format(REDIS_KEY_PREFIX, participant_code[0])
+
 
 class Worker(object):
     def __init__(self, redis_conn=None, char_range=None):
         self.redis_conn = redis_conn
         self.browser_bots = {}
-        self.session_participants = OrderedDict()
         self.prepared_submits = {}
-        self.char_range = char_range
+        char_range = char_range or SESSION_CODE_CHARSET
+        self.redis_listen_keys = ['{}-{}'.format(REDIS_KEY_PREFIX, char)
+                                  for char in char_range]
 
-    def initialize_session(self, session_code):
-        session = Session.objects.get(code=session_code)
+
+    def initialize_participant(self, participant_code):
+        participant = Participant.objects.get(code=participant_code)
         self.prune()
-        self.session_participants[session_code] = []
 
         # in order to do .assertEqual etc, need to pass a reference to a
         # SimpleTestCase down to the Player bot
         test_case = SimpleTestCase()
 
-        for participant in session.get_participants():
-            self.session_participants[session_code].append(
-                participant.code)
-            bot = ParticipantBot(
-                participant, unittest_case=test_case)
-            self.browser_bots[participant.code] = bot
+        self.browser_bots[participant.code] = ParticipantBot(
+            participant, unittest_case=test_case)
         return {'ok': True}
 
     def get_method(self, command_name):
         commands = {
             'prepare_next_submit': self.prepare_next_submit,
             'consume_next_submit': self.consume_next_submit,
-            'initialize_session': self.initialize_session,
+            'initialize_participant': self.initialize_participant,
             'clear_all': self.clear_all,
             'ping': self.ping,
         }
@@ -70,10 +70,8 @@ class Worker(object):
 
     def prune(self):
         '''to avoid memory leaks'''
-        if len(self.session_participants) > SESSIONS_PRUNE_LIMIT:
-            _, p_codes = self.session_participants.popitem(last=False)
-            for participant_code in p_codes:
-                self.browser_bots.pop(participant_code, None)
+        # FIXME
+        pass
 
     def clear_all(self):
         self.browser_bots.clear()
@@ -138,8 +136,12 @@ class Worker(object):
 
             # put it in a loop so that we can still receive KeyboardInterrupts
             # otherwise it will block
+            idle_start = time.time()
             while result is None:
-                result = self.redis_conn.blpop(REDIS_KEY_PREFIX, timeout=3)
+                result = self.redis_conn.blpop(
+                    self.redis_listen_keys, timeout=3)
+            logger.info('idle for {}'.format(round(time.time() - idle_start, 3)))
+            busy_start = time.time()
 
             key, message_bytes = result
             message = json.loads(message_bytes.decode('utf-8'))
@@ -166,15 +168,16 @@ class Worker(object):
             finally:
                 retval_json = json.dumps(retval or {})
                 self.redis_conn.rpush(response_key, retval_json)
+                logger.info('busy for {}'.format(round(time.time() - busy_start, 3)))
 
 
-def ping(redis_conn, unique_response_code):
-    response_key = '{}-ping-{}'.format(REDIS_KEY_PREFIX, unique_response_code)
+def ping(redis_conn, participant_code):
+    response_key = '{}-ping-{}'.format(REDIS_KEY_PREFIX, participant_code)
     msg = {
         'command': 'ping',
         'response_key': response_key,
     }
-    redis_conn.rpush(REDIS_KEY_PREFIX, json.dumps(msg))
+    redis_conn.rpush(make_redis_key(participant_code), json.dumps(msg))
     result = redis_conn.blpop(response_key, timeout=1)
 
     if result is None:
@@ -187,20 +190,18 @@ def ping(redis_conn, unique_response_code):
         )
 
 
-def initialize_bots_redis(redis_conn, session_code, num_players_total):
-    response_key = '{}-initialize-{}'.format(REDIS_KEY_PREFIX, session_code)
+def initialize_bot_redis(redis_conn, participant_code):
+    response_key = '{}-initialize-{}'.format(REDIS_KEY_PREFIX, participant_code)
     msg = {
-        'command': 'initialize_session',
-        'kwargs': {'session_code': session_code},
+        'command': 'initialize_participant',
+        'kwargs': {'participant_code': participant_code},
         'response_key': response_key,
     }
     # ping will raise if it times out
-    ping(redis_conn, session_code)
-    redis_conn.rpush(REDIS_KEY_PREFIX, json.dumps(msg))
+    ping(redis_conn, participant_code)
+    redis_conn.rpush(make_redis_key(participant_code), json.dumps(msg))
 
-    # timeout must be int
-    # this is about 10x as much time as it should take
-    timeout = int(max(1, num_players_total * 0.1))
+    timeout=1
     result = redis_conn.blpop(response_key, timeout=timeout)
     if result is None:
         raise Exception(
@@ -215,26 +216,25 @@ def initialize_bots_redis(redis_conn, session_code, num_players_total):
     return {'ok': True}
 
 
-def initialize_bots_in_process(session_code):
-    browser_bot_worker.initialize_session(session_code)
+def initialize_bot_in_process(participant_code):
+    browser_bot_worker.initialize_participant(participant_code)
 
 
-def initialize_bots(session_code, num_players_total):
+def initialize_bot(participant_code):
     if otree.common_internal.USE_REDIS:
-        initialize_bots_redis(
+        initialize_bot_redis(
             redis_conn=get_redis_conn(),
-            session_code=session_code,
-            num_players_total=num_players_total
+            participant_code=participant_code,
         )
     else:
-        initialize_bots_in_process(session_code)
+        initialize_bot_in_process(participant_code)
 
 
 def redis_flush_bots(redis_conn, char_range=None):
-    pattern = REDIS_KEY_PREFIX
-    if char_range:
-        pattern += '[{}]'.format(char_range)
-    for key in redis_conn.scan_iter(match='{}*'.format(REDIS_KEY_PREFIX)):
+    if not char_range:
+        char_range = SESSION_CODE_CHARSET
+    for key in redis_conn.scan_iter(match='{}[{}]*'.format(
+            REDIS_KEY_PREFIX, char_range)):
         redis_conn.delete(key)
 
 
@@ -261,7 +261,7 @@ class EphemeralBrowserBot(object):
             },
             'response_key': response_key,
         }
-        redis_conn.rpush(REDIS_KEY_PREFIX, json.dumps(msg))
+        redis_conn.rpush(make_redis_key(participant_code), json.dumps(msg))
         # in practice is very fast...around 1ms
         # however, if an exception occurs, could take quite long.
         result = redis_conn.blpop(response_key, timeout=3)
@@ -305,7 +305,7 @@ class EphemeralBrowserBot(object):
             },
             'response_key': response_key,
         }
-        redis_conn.rpush(REDIS_KEY_PREFIX, json.dumps(msg))
+        redis_conn.rpush(make_redis_key(participant_code), json.dumps(msg))
         # in practice is very fast...around 1ms
         result = redis_conn.blpop(response_key, timeout=1)
         if result is None:
