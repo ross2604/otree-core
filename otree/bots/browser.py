@@ -33,11 +33,12 @@ logger = logging.getLogger('otree.test.browser_bots')
 
 
 class Worker(object):
-    def __init__(self, redis_conn=None):
+    def __init__(self, redis_conn=None, char_range=None):
         self.redis_conn = redis_conn
         self.browser_bots = {}
         self.session_participants = OrderedDict()
         self.prepared_submits = {}
+        self.char_range = char_range
 
     def initialize_session(self, session_code):
         session = Session.objects.get(code=session_code)
@@ -229,7 +230,10 @@ def initialize_bots(session_code, num_players_total):
         initialize_bots_in_process(session_code)
 
 
-def redis_flush_bots(redis_conn):
+def redis_flush_bots(redis_conn, char_range=None):
+    pattern = REDIS_KEY_PREFIX
+    if char_range:
+        pattern += '[{}]'.format(char_range)
     for key in redis_conn.scan_iter(match='{}*'.format(REDIS_KEY_PREFIX)):
         redis_conn.delete(key)
 
