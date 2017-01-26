@@ -143,3 +143,13 @@ class BrowserBotsLauncherSessionCode(models.Model):
 
     # hack to enforce singleton
     is_only_record = models.BooleanField(unique=True, default=True)
+
+
+class ChatMessage(models.Model):
+    class Meta:
+        app_label = "otree"
+
+    sender = models.ForeignKey('otree.Participant')
+    round_number = models.PositiveIntegerField()
+    message = models.CharField(max_length=255)
+    time = models.DateTimeField(auto_now=True)
