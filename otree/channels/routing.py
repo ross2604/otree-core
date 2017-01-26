@@ -54,5 +54,10 @@ channel_routing = [
     route('websocket.disconnect',
           consumers.disconnect_browser_bot,
           path=r'^/browser_bot_wait/$'),
-
+    route('websocket.connect',
+          consumers.connect_open_chat,
+          path=r'^/open_chat/$'),
+    route('websocket.disconnect',
+          consumers.disconnect_open_chat,
+          path=r'^/open_chat/$'),
 ]

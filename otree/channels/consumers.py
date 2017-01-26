@@ -341,3 +341,11 @@ def connect_browser_bot(message):
 
 def disconnect_browser_bot(message):
     Group('browser_bot_wait').discard(message.reply_channel)
+
+
+def connect_open_chat(message):
+    print("Open chat connect")
+
+
+def disconnect_open_chat(message):
+    print("Open chat disconnect")
